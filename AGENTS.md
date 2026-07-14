@@ -22,6 +22,7 @@ vp run ready
 
 - Keep deterministic gameplay and gesture logic in `src/game` with unit tests.
 - Keep webcam, MediaPipe, and browser-permission code in `src/vision`.
+- Tailwind CSS 4 is available through `@tailwindcss/vite`; use utilities for new interface work while keeping bespoke animation and arena styles readable.
 - Do not couple game rules directly to MediaPipe landmark objects; translate them at the vision boundary.
 - Camera access must always follow an explicit player action and must be stopped when a session ends.
 

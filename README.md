@@ -1,6 +1,6 @@
 # Fruit Ninja
 
-A browser-first Fruit Ninja game foundation built with React, TypeScript, Vite+, and MediaPipe Tasks Vision. The goal is webcam fingertip tracking, swipe detection, and real-time fruit slicing without a controller.
+A browser-first Fruit Ninja game foundation built with React, TypeScript, Tailwind CSS, Vite+, and MediaPipe Tasks Vision. The goal is webcam fingertip tracking, swipe detection, and real-time fruit slicing without a controller.
 
 > [!NOTE]
 > This repository currently contains the application shell, game-domain contracts, swipe math, tests, and delivery pipeline. Camera access, hand tracking, fruit physics, and scoring are the next milestones.
@@ -76,6 +76,7 @@ src/
 ```
 
 - `@mediapipe/tasks-vision` is installed for the upcoming hand-landmark adapter.
+- Tailwind CSS 4 is connected through its first-party Vite plugin and is ready for utility classes.
 - Gesture math is isolated from MediaPipe so it can be tested without a webcam or browser.
 - The vision contract keeps camera/model lifecycle code separate from the render and game loops.
 - GitHub Actions uses the official Vite+ setup action and runs install, static checks, tests, and the production build on pushes and pull requests.

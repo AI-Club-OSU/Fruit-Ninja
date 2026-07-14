@@ -19,7 +19,7 @@ export default function App() {
   const [isArmed, setIsArmed] = useState(false);
 
   return (
-    <main className="app-shell">
+    <main className="app-shell selection:bg-lime-300 selection:text-zinc-950">
       <header className="site-header">
         <a className="brand" href="#top" aria-label="Fruit Ninja home">
           <span className="brand-mark" aria-hidden="true" />
