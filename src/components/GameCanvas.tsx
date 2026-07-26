@@ -16,7 +16,7 @@ import { useEffect, useRef } from "react";
 
 import { FruitSpawner } from "../game/spawner.ts";
 import { SlashDetector, type SlashEvent } from "../game/slashDetector.ts";
-import { createPointerCursorSource } from "../vision/cursorSource.ts";
+import { createMediaPipeCursorSource } from "../vision/cursorSource.ts";
 import { drawFrame } from "./renderer.ts";
 
 /** Cap per-frame delta so a background tab doesn't teleport fruit on return. */
@@ -33,18 +33,19 @@ function handleSlash(slash: SlashEvent): void {
 
 export default function GameCanvas({ running }: GameCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-
+  const videoRef = useRef<HTMLVideoElement>(null);
   useEffect(() => {
     const canvas = canvasRef.current;
+    const video = videoRef.current;
     const ctx = canvas?.getContext("2d");
 
-    if (!canvas || !ctx || !running) {
+    if (!canvas || !ctx || !running || !video) {
       return;
     }
 
     const spawner = new FruitSpawner();
     const detector = new SlashDetector({ onSlash: handleSlash });
-    const unsubscribe = createPointerCursorSource(canvas).subscribe((sample) => {
+    const unsubscribe = createMediaPipeCursorSource(video).subscribe((sample) => {
       detector.updateCursor(sample.x, sample.y, sample.timestampMs);
     });
 
@@ -82,5 +83,10 @@ export default function GameCanvas({ running }: GameCanvasProps) {
     };
   }, [running]);
 
-  return <canvas ref={canvasRef} className="game-canvas" aria-label="Fruit arena" />;
+  return (
+    <>
+      <canvas ref={canvasRef} className="game-canvas" />
+      <video ref={videoRef} hidden playsInline muted />
+    </>
+  );
 }

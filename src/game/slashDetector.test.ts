@@ -16,7 +16,10 @@ describe("slash detector", () => {
 
   it("fires once for a fast swipe, then respects the cooldown", () => {
     const slashes: SlashEvent[] = [];
-    const detector = new SlashDetector({ cooldownMs: 250, onSlash: (slash) => slashes.push(slash) });
+    const detector = new SlashDetector({
+      cooldownMs: 250,
+      onSlash: (slash) => slashes.push(slash),
+    });
 
     // A fast horizontal swipe: 0.4 arena widths in ~64 ms.
     for (let step = 0; step < 5; step += 1) {
