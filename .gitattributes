@@ -1,0 +1,22 @@
+# Normalize all text files to LF in the repository.
+# Prevents Windows checkouts (core.autocrlf=true) from producing CRLF
+# working trees that fail `vp check` / CI formatting.
+* text=auto eol=lf
+
+# Explicit LF for the source and config files the formatter checks.
+*.ts   text eol=lf
+*.tsx  text eol=lf
+*.js   text eol=lf
+*.jsx  text eol=lf
+*.json text eol=lf
+*.css  text eol=lf
+*.html text eol=lf
+*.md   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+
+# Binary assets must never be normalized.
+*.svg  binary
+*.png  binary
+*.jpg  binary
+*.ico  binary
