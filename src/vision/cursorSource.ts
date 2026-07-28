@@ -126,7 +126,7 @@ export function createMediaPipeCursorSource(video: HTMLVideoElement): CursorSour
               return;
             }
             listener({
-              x: 1-fingertip.x,
+              x: 1 - fingertip.x,
               y: fingertip.y,
               timestampMs,
               confidence: 1,
