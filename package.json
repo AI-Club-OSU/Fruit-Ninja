@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build": "vp build",
     "ready": "vp check && vp test && vp build"
   },
   "dependencies": {

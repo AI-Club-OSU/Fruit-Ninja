@@ -1,0 +1,12 @@
+{
+  // Cloudflare Workers static-asset (SPA) deployment for the Vite build output.
+  // `npx wrangler versions upload` reads this to know what to publish.
+  "name": "fruit-ninja",
+  "compatibility_date": "2026-07-28",
+  "assets": {
+    // Vite emits the production build here (see `vp build`).
+    "directory": "./dist",
+    // Serve index.html for client-side routes / unknown paths.
+    "not_found_handling": "single-page-application",
+  },
+}
