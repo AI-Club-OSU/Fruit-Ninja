@@ -3,6 +3,11 @@
   // `npx wrangler versions upload` reads this to know what to publish.
   "name": "fruit-ninja",
   "compatibility_date": "2026-07-28",
+  // Build the Vite app before uploading so ./dist exists on the deploy runner.
+  // `npx wrangler versions upload` runs this command first.
+  "build": {
+    "command": "pnpm run build",
+  },
   "assets": {
     // Vite emits the production build here (see `vp build`).
     "directory": "./dist",
