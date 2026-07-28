@@ -1,22 +1,18 @@
-import { useState, type PointerEvent } from "react";
+/**
+ * Application shell: landing copy, session control, and the game arena.
+ *
+ * Owns only the "is a session running" flag for now.
+ * TODO(state machine): replace the boolean with idle/playing/paused/game-over
+ * states once the game-state owner lands.
+ */
 
-const targets = [
-  { name: "lime", className: "target target--lime" },
-  { name: "orange", className: "target target--orange" },
-  { name: "watermelon", className: "target target--melon" },
-] as const;
+import { useState } from "react";
 
-function updateBladePosition(event: PointerEvent<HTMLDivElement>) {
-  const bounds = event.currentTarget.getBoundingClientRect();
-  const x = Math.max(0, Math.min(bounds.width, event.clientX - bounds.left));
-  const y = Math.max(0, Math.min(bounds.height, event.clientY - bounds.top));
-
-  event.currentTarget.style.setProperty("--blade-x", `${x}px`);
-  event.currentTarget.style.setProperty("--blade-y", `${y}px`);
-}
+import GameCanvas from "./components/GameCanvas.tsx";
+import Hud from "./components/Hud.tsx";
 
 export default function App() {
-  const [isArmed, setIsArmed] = useState(false);
+  const [isRunning, setIsRunning] = useState(false);
 
   return (
     <main className="app-shell selection:bg-lime-300 selection:text-zinc-950">
@@ -28,7 +24,7 @@ export default function App() {
 
         <p className="build-status">
           <span className="status-light" aria-hidden="true" />
-          Foundation online
+          Arena online
         </p>
       </header>
 
@@ -40,48 +36,34 @@ export default function App() {
             <span>Ninja</span>
           </h1>
           <p className="hero-summary">
-            Turn a webcam and one fingertip into the blade. The arena is ready for hand tracking,
-            physics, and fruit.
+            Turn a webcam and one fingertip into the blade. Fruit is live in the arena — swipe fast
+            to register a slash.
           </p>
 
           <div className="hero-action">
             <button
               className="primary-action"
               type="button"
-              aria-pressed={isArmed}
-              onClick={() => setIsArmed((armed) => !armed)}
+              aria-pressed={isRunning}
+              onClick={() => setIsRunning((running) => !running)}
             >
-              {isArmed ? "Pause training stage" : "Arm training stage"}
+              {isRunning ? "End session" : "Start slicing"}
               <span aria-hidden="true">↗</span>
             </button>
-            <p>Camera remains off until the MediaPipe adapter lands.</p>
+            <p>Pointer input for now. Camera stays off until the MediaPipe adapter lands.</p>
           </div>
         </div>
 
-        <div
-          className={`training-stage${isArmed ? " training-stage--armed" : ""}`}
-          onPointerMove={updateBladePosition}
-        >
-          <div className="stage-topline">
-            <span>{isArmed ? "Pointer tracking active" : "Training stage idle"}</span>
-            <span>60 FPS target</span>
-          </div>
+        <div className="game-arena">
+          {/* TODO(score): wire real score/lives once those systems exist. */}
+          <Hud score={0} lives={3} />
 
           <div className="stage-grid" aria-hidden="true" />
-          <div className="stage-orbit stage-orbit--outer" aria-hidden="true" />
-          <div className="stage-orbit stage-orbit--inner" aria-hidden="true" />
 
-          {targets.map((target) => (
-            <span className={target.className} key={target.name} aria-hidden="true">
-              <span className="target-leaf" />
-            </span>
-          ))}
-
-          <div className="blade-trail" aria-hidden="true" />
-          <div className="blade-point" aria-hidden="true" />
+          <GameCanvas running={isRunning} />
 
           <p className="stage-instruction">
-            {isArmed ? "Move your pointer through the targets" : "Arm the stage to test input"}
+            {isRunning ? "Swipe through the fruit" : "Start a session to spawn fruit"}
           </p>
         </div>
       </section>
@@ -89,15 +71,15 @@ export default function App() {
       <footer className="system-rail" aria-label="Project foundation status">
         <p>
           <span>01</span>
-          React + TypeScript
+          Canvas arena live
         </p>
         <p>
           <span>02</span>
-          MediaPipe Tasks Vision
+          Slash detection armed
         </p>
         <p>
           <span>03</span>
-          Gesture math isolated
+          MediaPipe adapter pending
         </p>
       </footer>
     </main>
