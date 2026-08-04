@@ -1,87 +1,249 @@
 /**
- * Application shell: landing copy, session control, and the game arena.
+ * Application shell and screen router.
  *
- * Owns only the "is a session running" flag for now.
- * TODO(state machine): replace the boolean with idle/playing/paused/game-over
- * states once the game-state owner lands.
+ * Owns the game state machine (menu → playing → paused → game over) via
+ * `gameReducer`, and translates the Arena's score/life callbacks into actions.
+ * Also tracks the camera/vision status so gameplay can wait behind a "starting
+ * camera" screen and surface an error if the webcam is unavailable.
+ *
+ * `runId` bumps on every start/restart/retry so GameCanvas rebuilds a fresh
+ * Arena and camera; pause/resume only flip `running`, so the board is preserved.
  */
 
-import { useState } from "react";
+import { type ReactNode, useCallback, useEffect, useReducer, useState } from "react";
 
 import GameCanvas from "./components/GameCanvas.tsx";
 import Hud from "./components/Hud.tsx";
+import { gameReducer, initialGameState } from "./game/gameState.ts";
+import type { VisionStatus } from "./vision/contracts.ts";
 
 export default function App() {
-  const [isRunning, setIsRunning] = useState(false);
+  const [state, dispatch] = useReducer(gameReducer, initialGameState);
+  const [runId, setRunId] = useState(0);
+  const [visionStatus, setVisionStatus] = useState<VisionStatus>("idle");
+
+  // The camera runs only during a live session; game over ends it.
+  const active = state.phase === "playing" || state.phase === "paused";
+  const running = state.phase === "playing";
+  const cameraReady = visionStatus === "ready";
+  const cameraStarting =
+    state.phase === "playing" &&
+    (visionStatus === "idle" ||
+      visionStatus === "requesting-camera" ||
+      visionStatus === "loading-model");
+  const cameraError = state.phase === "playing" && visionStatus === "error";
+
+  const start = useCallback(() => {
+    dispatch({ type: "start" });
+    setVisionStatus("idle");
+    setRunId((id) => id + 1);
+  }, []);
+
+  const restart = useCallback(() => {
+    dispatch({ type: "restart" });
+    setVisionStatus("idle");
+    setRunId((id) => id + 1);
+  }, []);
+
+  const retryCamera = useCallback(() => {
+    setVisionStatus("idle");
+    setRunId((id) => id + 1);
+  }, []);
+
+  const onScore = useCallback((points: number) => dispatch({ type: "score", points }), []);
+  const onLifeLost = useCallback(() => dispatch({ type: "loseLife" }), []);
+  const onPause = useCallback(() => dispatch({ type: "pause" }), []);
+
+  // Keyboard shortcuts: space to start/restart, P or Esc to pause/resume.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === " " && (state.phase === "menu" || state.phase === "gameOver")) {
+        event.preventDefault();
+        if (state.phase === "menu") {
+          start();
+        } else {
+          restart();
+        }
+      } else if (event.key === "p" || event.key === "Escape") {
+        if (state.phase === "playing" && cameraReady) dispatch({ type: "pause" });
+        else if (state.phase === "paused") dispatch({ type: "resume" });
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [state.phase, cameraReady, start, restart]);
 
   return (
-    <main className="app-shell selection:bg-lime-300 selection:text-zinc-950">
-      <header className="site-header">
-        <a className="brand" href="#top" aria-label="Fruit Ninja home">
-          <span className="brand-mark" aria-hidden="true" />
-          <span>FN / 001</span>
-        </a>
+    <main className="game-shell selection:bg-amber-200 selection:text-zinc-950">
+      <div className="arena">
+        {active && (
+          <GameCanvas
+            running={running}
+            runId={runId}
+            onScore={onScore}
+            onLifeLost={onLifeLost}
+            onPause={onPause}
+            onVisionStatus={setVisionStatus}
+          />
+        )}
 
-        <p className="build-status">
-          <span className="status-light" aria-hidden="true" />
-          Arena online
-        </p>
-      </header>
+        {active && <Hud score={state.score} best={state.best} lives={state.lives} />}
 
-      <section className="hero" id="top" aria-labelledby="hero-title">
-        <div className="hero-copy">
-          <p className="eyebrow">Computer vision arcade</p>
-          <h1 id="hero-title">
-            Fruit
-            <span>Ninja</span>
-          </h1>
-          <p className="hero-summary">
-            Turn a webcam and one fingertip into the blade. Fruit is live in the arena — swipe fast
-            to register a slash.
-          </p>
-
-          <div className="hero-action">
+        {running && cameraReady && (
+          <>
             <button
-              className="primary-action"
+              className="pause-button"
               type="button"
-              aria-pressed={isRunning}
-              onClick={() => setIsRunning((running) => !running)}
+              aria-label="Pause"
+              onClick={() => dispatch({ type: "pause" })}
             >
-              {isRunning ? "End session" : "Start slicing"}
-              <span aria-hidden="true">↗</span>
+              <span />
+              <span />
             </button>
-            <p>Pointer input for now. Camera stays off until the MediaPipe adapter lands.</p>
-          </div>
-        </div>
+            <p className="arena-hint">
+              Slice with your finger · make a fist to pause · avoid the bombs
+            </p>
+          </>
+        )}
 
-        <div className="game-arena">
-          {/* TODO(score): wire real score/lives once those systems exist. */}
-          <Hud score={0} lives={3} />
+        {state.phase === "menu" && <MenuScreen onStart={start} />}
 
-          <div className="stage-grid" aria-hidden="true" />
+        {cameraStarting && (
+          <CameraStarting status={visionStatus} onCancel={() => dispatch({ type: "toMenu" })} />
+        )}
 
-          <GameCanvas running={isRunning} />
+        {cameraError && (
+          <Overlay title="Camera unavailable">
+            <p className="overlay-message">
+              We couldn&rsquo;t reach your webcam. Check that no other app is using it and that the
+              browser has camera permission, then try again.
+            </p>
+            <div className="overlay-actions">
+              <button className="primary-action" type="button" onClick={retryCamera}>
+                Try again
+                <span aria-hidden="true">↻</span>
+              </button>
+              <button
+                className="ghost-action"
+                type="button"
+                onClick={() => dispatch({ type: "toMenu" })}
+              >
+                Main menu
+              </button>
+            </div>
+          </Overlay>
+        )}
 
-          <p className="stage-instruction">
-            {isRunning ? "Swipe through the fruit" : "Start a session to spawn fruit"}
-          </p>
-        </div>
-      </section>
+        {state.phase === "paused" && (
+          <Overlay title="Paused">
+            <div className="overlay-actions">
+              <button
+                className="primary-action"
+                type="button"
+                onClick={() => dispatch({ type: "resume" })}
+              >
+                Continue
+              </button>
+              <button className="ghost-action" type="button" onClick={restart}>
+                Restart
+              </button>
+              <button
+                className="ghost-action"
+                type="button"
+                onClick={() => dispatch({ type: "toMenu" })}
+              >
+                Quit
+              </button>
+            </div>
+          </Overlay>
+        )}
 
-      <footer className="system-rail" aria-label="Project foundation status">
-        <p>
-          <span>01</span>
-          Canvas arena live
-        </p>
-        <p>
-          <span>02</span>
-          Slash detection armed
-        </p>
-        <p>
-          <span>03</span>
-          MediaPipe adapter pending
-        </p>
-      </footer>
+        {state.phase === "gameOver" && (
+          <Overlay title="Game Over">
+            <p className="overlay-score">
+              <span>Score</span>
+              <strong>{state.score.toString().padStart(5, "0")}</strong>
+            </p>
+            <p className="overlay-best">
+              Best this session · {state.best.toString().padStart(5, "0")}
+            </p>
+            <div className="overlay-actions">
+              <button className="primary-action" type="button" onClick={restart}>
+                Play again
+                <span aria-hidden="true">↗</span>
+              </button>
+              <button
+                className="ghost-action"
+                type="button"
+                onClick={() => dispatch({ type: "toMenu" })}
+              >
+                Main menu
+              </button>
+            </div>
+          </Overlay>
+        )}
+      </div>
     </main>
+  );
+}
+
+function MenuScreen({ onStart }: { onStart: () => void }) {
+  return (
+    <div className="menu-screen">
+      <p className="eyebrow">Computer vision arcade</p>
+      <h1 className="game-title">
+        Fruit
+        <span>Ninja</span>
+      </h1>
+      <p className="menu-summary">
+        Turn your webcam and one fingertip into the blade. Swipe through the fruit as it arcs, chain
+        slices for combo bonuses — and whatever you do, don&rsquo;t cut the bombs.
+      </p>
+
+      <button className="primary-action primary-action--lg" type="button" onClick={onStart}>
+        Start slicing
+        <span aria-hidden="true">↗</span>
+      </button>
+
+      <p className="menu-note">
+        Uses your webcam — your index fingertip controls the blade. Allow camera access when
+        prompted; nothing leaves your device.
+      </p>
+    </div>
+  );
+}
+
+function CameraStarting({ status, onCancel }: { status: VisionStatus; onCancel: () => void }) {
+  const copy =
+    status === "loading-model"
+      ? { title: "Loading hand tracking", body: "Warming up the model — this only happens once." }
+      : {
+          title: "Starting camera",
+          body: "Allow camera access when your browser asks. Point the webcam at your hand.",
+        };
+
+  return (
+    <Overlay title={copy.title}>
+      <p className="overlay-message">
+        <span className="camera-pulse" aria-hidden="true" />
+        {copy.body}
+      </p>
+      <div className="overlay-actions">
+        <button className="ghost-action" type="button" onClick={onCancel}>
+          Back to menu
+        </button>
+      </div>
+    </Overlay>
+  );
+}
+
+function Overlay({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="overlay" role="dialog" aria-label={title}>
+      <div className="overlay-card">
+        <h2 className="overlay-title">{title}</h2>
+        {children}
+      </div>
+    </div>
   );
 }

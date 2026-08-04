@@ -10,6 +10,10 @@
 
 import { FilesetResolver, HandLandmarker } from "@mediapipe/tasks-vision";
 
+import type { VisionStatus } from "./contracts.ts";
+import { isFist } from "./handGesture.ts";
+import { type OneEuroOptions, Point2DFilter } from "./oneEuroFilter.ts";
+
 const HAND_MODEL_URL =
   "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
 
@@ -21,16 +25,21 @@ const INDEX_FINGER_TIP = 8;
 
 function getHandLandmarker(): Promise<HandLandmarker> {
   if (!handPromise) {
-    handPromise = FilesetResolver.forVisionTasks(WASM_BASE).then((fileset) =>
-      HandLandmarker.createFromOptions(fileset, {
-        baseOptions: {
-          modelAssetPath: HAND_MODEL_URL,
-          delegate: "CPU",
-        },
-        runningMode: "VIDEO",
-        numHands: 1,
-      }),
-    );
+    handPromise = (async () => {
+      try {
+        const fileset = await FilesetResolver.forVisionTasks(WASM_BASE);
+        return await HandLandmarker.createFromOptions(fileset, {
+          baseOptions: { modelAssetPath: HAND_MODEL_URL, delegate: "CPU" },
+          runningMode: "VIDEO",
+          numHands: 1,
+        });
+      } catch (error) {
+        // Clear the cache so a later retry can attempt the load again instead
+        // of resolving the same rejected promise forever.
+        handPromise = null;
+        throw error;
+      }
+    })();
   }
 
   return handPromise;
@@ -47,6 +56,12 @@ export type CursorSample = Readonly<{
 
   /** Detection confidence, 0..1. */
   confidence: number;
+
+  /**
+   * True when the hand is a closed fist — a coarse gesture the game maps to
+   * "pause". Pointer-based sources leave this undefined (no gesture channel).
+   */
+  fist?: boolean;
 }>;
 
 export type CursorListener = (sample: CursorSample) => void;
@@ -86,51 +101,84 @@ export function createPointerCursorSource(element: HTMLElement): CursorSource {
   };
 }
 
+export type MediaPipeCursorOptions = Readonly<{
+  /** Called as the pipeline moves through camera → model → ready / error. */
+  onStatus?: (status: VisionStatus) => void;
+  /** One Euro smoothing params for the fingertip; omit to use tuned defaults. */
+  smoothing?: OneEuroOptions;
+}>;
+
 /**
- * MediaPipe-backed cursor source.
+ * MediaPipe-backed cursor source: the index fingertip becomes the blade.
  *
- * Converts:
- * Camera → Video → HandLandmarker → CursorSample
+ * Converts:  Camera → Video → HandLandmarker → CursorSample
+ *
+ * The x axis is flipped (`1 - fingertip.x`) so the arena behaves like a mirror —
+ * move your hand right, the blade goes right — matching a `scaleX(-1)` preview.
+ * `onStatus` lets the UI show "allow camera" / "loading" / error states and gate
+ * gameplay until tracking is live. The stream is fully released on unsubscribe,
+ * so the camera stops when the session ends.
  */
-export function createMediaPipeCursorSource(video: HTMLVideoElement): CursorSource {
+export function createMediaPipeCursorSource(
+  video: HTMLVideoElement,
+  options: MediaPipeCursorOptions = {},
+): CursorSource {
+  const setStatus = (status: VisionStatus) => options.onStatus?.(status);
+
   return {
     subscribe(listener) {
       let animationFrameId = 0;
       let active = true;
       let stream: MediaStream | null = null;
+      // MediaPipe's VIDEO mode requires strictly increasing timestamps.
+      let lastTimestampMs = -1;
+      const smoother = new Point2DFilter(options.smoothing);
 
       const start = async () => {
+        setStatus("requesting-camera");
         stream = await navigator.mediaDevices.getUserMedia({
-          video: true,
+          video: { facingMode: "user" },
           audio: false,
         });
 
-        video.srcObject = stream;
+        if (!active) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
 
+        video.srcObject = stream;
         await video.play();
 
+        setStatus("loading-model");
         const handLandmarker = await getHandLandmarker();
+        if (!active) {
+          return;
+        }
+        setStatus("ready");
 
-        const handleFrame = (timestampMs: number) => {
+        const handleFrame = () => {
           if (!active) {
             return;
           }
 
-          const results = handLandmarker.detectForVideo(video, timestampMs);
+          const nowMs = performance.now();
+          if (video.readyState >= 2 && nowMs > lastTimestampMs) {
+            lastTimestampMs = nowMs;
+            const results = handLandmarker.detectForVideo(video, nowMs);
+            const landmarks = results.landmarks[0];
+            const fingertip = landmarks?.[INDEX_FINGER_TIP];
 
-          const landmarks = results.landmarks[0];
-
-          if (landmarks) {
-            const fingertip = landmarks[INDEX_FINGER_TIP];
-            if (fingertip == undefined) {
-              return;
+            if (fingertip) {
+              // Flip x for a mirror view, then smooth away landmark jitter.
+              const smoothed = smoother.filter(1 - fingertip.x, fingertip.y, nowMs);
+              listener({
+                x: smoothed.x,
+                y: smoothed.y,
+                timestampMs: nowMs,
+                confidence: 1,
+                fist: isFist(landmarks),
+              });
             }
-            listener({
-              x: 1 - fingertip.x,
-              y: fingertip.y,
-              timestampMs,
-              confidence: 1,
-            });
           }
 
           animationFrameId = requestAnimationFrame(handleFrame);
@@ -141,16 +189,13 @@ export function createMediaPipeCursorSource(video: HTMLVideoElement): CursorSour
 
       void start().catch((error) => {
         console.error("Failed to start MediaPipe cursor source:", error);
+        setStatus("error");
       });
+
       return () => {
         active = false;
-
         cancelAnimationFrame(animationFrameId);
-
-        stream?.getTracks().forEach((track) => {
-          track.stop();
-        });
-
+        stream?.getTracks().forEach((track) => track.stop());
         video.srcObject = null;
       };
     },
