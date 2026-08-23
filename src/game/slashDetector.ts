@@ -2,9 +2,9 @@
  * Slash gesture detection over a stream of cursor samples.
  *
  * Responsibility: keep a short rolling window of cursor positions, classify
- * fast movement as a slash using the existing gesture math in swipe.ts, and
- * notify a listener once per slash. Also exposes the recent trail so the
- * renderer can draw the blade.
+ * each new movement segment using the existing gesture math in swipe.ts, and
+ * notify a listener for every fast segment. Also exposes the recent trail so
+ * the renderer can draw the blade.
  *
  * This module never touches the DOM or MediaPipe — cursor samples arrive via
  * updateCursor() from whatever input source the app wires up.
@@ -37,23 +37,18 @@ export type SlashDetectorOptions = Readonly<{
   minimumSpeed?: number;
   /** How much cursor history to keep and evaluate, in ms. */
   windowMs?: number;
-  /** Minimum quiet time between two slash events, in ms. */
-  cooldownMs?: number;
   onSlash?: SlashListener;
 }>;
 
 export class SlashDetector {
   private readonly minimumSpeed: number;
   private readonly windowMs: number;
-  private readonly cooldownMs: number;
   private readonly onSlash: SlashListener | undefined;
   private readonly points: TrackingPoint[] = [];
-  private lastSlashAtMs = Number.NEGATIVE_INFINITY;
 
   constructor(options: SlashDetectorOptions = {}) {
     this.minimumSpeed = options.minimumSpeed ?? DEFAULT_SLICE_SPEED;
     this.windowMs = options.windowMs ?? 120;
-    this.cooldownMs = options.cooldownMs ?? 250;
     this.onSlash = options.onSlash;
   }
 
@@ -63,29 +58,29 @@ export class SlashDetector {
   }
 
   /**
-   * Feed one cursor sample in arena units (0..1). Fires the slash listener
-   * when the windowed movement exceeds the speed threshold.
+   * Feed one cursor sample in arena units (0..1). Fires the slash listener for
+   * every new segment that exceeds the speed threshold. Reporting the whole
+   * active motion instead of only its first fast moment is important: a blade
+   * can become fast before it reaches a fruit, and collision detection still
+   * needs to receive the segment that actually crosses the fruit.
    */
   updateCursor(x: number, y: number, timestampMs: number): void {
     this.points.push({ x, y, capturedAtMs: timestampMs });
     this.expire(timestampMs);
 
-    if (timestampMs - this.lastSlashAtMs < this.cooldownMs) {
+    const latestSegment = this.points.slice(-2);
+
+    if (!isSliceGesture(latestSegment, this.minimumSpeed)) {
       return;
     }
 
-    if (!isSliceGesture(this.points, this.minimumSpeed)) {
-      return;
-    }
-
-    const metrics = measureSwipe(this.points);
+    const metrics = measureSwipe(latestSegment);
 
     if (!metrics) {
       return;
     }
 
-    this.lastSlashAtMs = timestampMs;
-    this.onSlash?.({ points: [...this.points], metrics });
+    this.onSlash?.({ points: latestSegment, metrics });
   }
 
   /** Drop points older than the window; call each frame so idle trails fade. */
@@ -98,6 +93,5 @@ export class SlashDetector {
   /** Clear all history, e.g. when a session stops. */
   reset(): void {
     this.points.length = 0;
-    this.lastSlashAtMs = Number.NEGATIVE_INFINITY;
   }
 }
