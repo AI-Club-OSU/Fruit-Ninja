@@ -11,8 +11,8 @@
 import { FilesetResolver, HandLandmarker } from "@mediapipe/tasks-vision";
 
 import type { VisionStatus } from "./contracts.ts";
-import { isFist } from "./handGesture.ts";
 import { type OneEuroOptions, Point2DFilter } from "./oneEuroFilter.ts";
+import { mapCameraPointToArena } from "./trackingArea.ts";
 
 const HAND_MODEL_URL =
   "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
@@ -32,6 +32,9 @@ function getHandLandmarker(): Promise<HandLandmarker> {
           baseOptions: { modelAssetPath: HAND_MODEL_URL, delegate: "CPU" },
           runningMode: "VIDEO",
           numHands: 1,
+          minHandDetectionConfidence: 0.25,
+          minHandPresenceConfidence: 0.25,
+          minTrackingConfidence: 0.25,
         });
       } catch (error) {
         // Clear the cache so a later retry can attempt the load again instead
@@ -56,12 +59,6 @@ export type CursorSample = Readonly<{
 
   /** Detection confidence, 0..1. */
   confidence: number;
-
-  /**
-   * True when the hand is a closed fist — a coarse gesture the game maps to
-   * "pause". Pointer-based sources leave this undefined (no gesture channel).
-   */
-  fist?: boolean;
 }>;
 
 export type CursorListener = (sample: CursorSample) => void;
@@ -113,8 +110,8 @@ export type MediaPipeCursorOptions = Readonly<{
  *
  * Converts:  Camera → Video → HandLandmarker → CursorSample
  *
- * The x axis is flipped (`1 - fingertip.x`) so the arena behaves like a mirror —
- * move your hand right, the blade goes right — matching a `scaleX(-1)` preview.
+ * Camera coordinates are mirrored and expanded so comfortable hand movement
+ * reaches the full arena without requiring the player to touch the frame edges.
  * `onStatus` lets the UI show "allow camera" / "loading" / error states and gate
  * gameplay until tracking is live. The stream is fully released on unsubscribe,
  * so the camera stops when the session ends.
@@ -137,7 +134,12 @@ export function createMediaPipeCursorSource(
       const start = async () => {
         setStatus("requesting-camera");
         stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "user" },
+          video: {
+            facingMode: "user",
+            width: { ideal: 960 },
+            height: { ideal: 540 },
+            frameRate: { ideal: 30 },
+          },
           audio: false,
         });
 
@@ -169,14 +171,13 @@ export function createMediaPipeCursorSource(
             const fingertip = landmarks?.[INDEX_FINGER_TIP];
 
             if (fingertip) {
-              // Flip x for a mirror view, then smooth away landmark jitter.
-              const smoothed = smoother.filter(1 - fingertip.x, fingertip.y, nowMs);
+              const mapped = mapCameraPointToArena(fingertip.x, fingertip.y);
+              const smoothed = smoother.filter(mapped.x, mapped.y, nowMs);
               listener({
                 x: smoothed.x,
                 y: smoothed.y,
                 timestampMs: nowMs,
                 confidence: 1,
-                fist: isFist(landmarks),
               });
             }
           }

@@ -43,9 +43,13 @@ describe("slash detector", () => {
       position: { x: 0.45, y: 0.5 },
       velocity: { x: 0, y: 0 },
     });
-    const hits: Fruit[] = [];
+    const hits = new Set<Fruit>();
     const detector = new SlashDetector({
-      onSlash: (slash) => hits.push(...sliceFruits(slash.points, [fruit], 1)),
+      onSlash: (slash) => {
+        for (const hit of sliceFruits(slash.points, [fruit], 1)) {
+          hits.add(hit);
+        }
+      },
     });
 
     detector.updateCursor(0.1, 0.5, 0);
@@ -54,7 +58,7 @@ describe("slash detector", () => {
     detector.updateCursor(0.4, 0.5, 48);
     detector.updateCursor(0.5, 0.5, 64); // Later segment crosses the fruit.
 
-    expect(hits).toEqual([fruit]);
+    expect([...hits]).toEqual([fruit]);
   });
 
   it("expires trail points outside the rolling window", () => {
@@ -67,6 +71,17 @@ describe("slash detector", () => {
     detector.expire(200);
 
     expect(detector.trail).toHaveLength(0);
+  });
+
+  it("bridges a brief tracking dropout instead of losing the sweep", () => {
+    const slashes: SlashEvent[] = [];
+    const detector = new SlashDetector({ onSlash: (slash) => slashes.push(slash) });
+
+    detector.updateCursor(0.2, 0.5, 0);
+    detector.updateCursor(0.5, 0.5, 200);
+
+    expect(slashes).toHaveLength(1);
+    expect(slashes[0]?.points.map(({ x }) => x)).toEqual([0.2, 0.5]);
   });
 
   it("reset clears history without suppressing the next slash", () => {

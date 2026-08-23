@@ -11,6 +11,11 @@
 import type { Fruit, Vector2 } from "./fruit.ts";
 import type { TrackingPoint } from "./swipe.ts";
 
+/** Extra blade reach for imperfect fingertip tracking, in arena-height units. */
+export const FRUIT_SLICE_ASSIST = 0.04;
+/** Bombs stay precise so generous fruit assistance does not add cheap penalties. */
+export const BOMB_SLICE_ASSIST = 0.008;
+
 /** Distance from point `p` to the segment `a`→`b`, all in the same units. */
 export function distancePointToSegment(p: Vector2, a: Vector2, b: Vector2): number {
   const abx = b.x - a.x;
@@ -35,7 +40,7 @@ export function distancePointToSegment(p: Vector2, a: Vector2, b: Vector2): numb
  * @param trail slash points in arena units, oldest first
  * @param fruits live fruit to test
  * @param aspect arena width / height, used to make the space isotropic
- * @returns the fruit that at least one trail segment passes within radius of
+ * @returns entities that at least one trail segment passes close enough to cut
  */
 export function sliceFruits(
   trail: readonly TrackingPoint[],
@@ -51,6 +56,8 @@ export function sliceFruits(
 
   for (const fruit of fruits) {
     const center = scaleX(fruit.position);
+    const assist = fruit.kind === "bomb" ? BOMB_SLICE_ASSIST : FRUIT_SLICE_ASSIST;
+    const hitRadius = fruit.radius + assist;
     let cut = false;
 
     for (let index = 1; index < trail.length && !cut; index += 1) {
@@ -59,7 +66,7 @@ export function sliceFruits(
       if (!from || !to) {
         continue;
       }
-      if (distancePointToSegment(center, scaleX(from), scaleX(to)) <= fruit.radius) {
+      if (distancePointToSegment(center, scaleX(from), scaleX(to)) <= hitRadius) {
         cut = true;
       }
     }

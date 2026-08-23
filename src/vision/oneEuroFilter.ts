@@ -81,8 +81,8 @@ export type OneEuroOptions = Readonly<{
 
 /** Defaults tuned to lean responsive, so fast swipes stay sharp. */
 export const DEFAULT_ONE_EURO: Required<OneEuroOptions> = {
-  minCutoff: 1.0,
-  beta: 0.6,
+  minCutoff: 1.4,
+  beta: 1.2,
   dCutoff: 1.0,
 };
 

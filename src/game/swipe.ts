@@ -10,7 +10,12 @@ export type SwipeMetrics = Readonly<{
   speed: number;
 }>;
 
-export const DEFAULT_SLICE_SPEED = 0.0015;
+/**
+ * Deliberately forgiving: at a 30 FPS camera cadence this only requires about
+ * 1.2% of the arena between samples. The player should not have to whip their
+ * hand around to prove that an intentional movement was a slash.
+ */
+export const DEFAULT_SLICE_SPEED = 0.00035;
 
 export function measureSwipe(points: readonly TrackingPoint[]): SwipeMetrics | null {
   const start = points[0];

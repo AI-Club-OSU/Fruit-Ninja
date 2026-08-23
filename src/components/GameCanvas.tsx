@@ -31,17 +31,12 @@ const MAX_FRAME_MS = 48;
 const SHAKE_PIXELS = 16;
 /** Hide the fingertip marker if no hand has been seen for this long. */
 const MARKER_STALE_MS = 250;
-/** Consecutive fist frames before a pause fires — filters brief mis-reads. */
-const FIST_TRIGGER_FRAMES = 3;
-/** Consecutive open-hand frames before the fist can trigger a pause again. */
-const FIST_RELEASE_FRAMES = 3;
 
 type GameCanvasProps = Readonly<{
   running: boolean;
   runId: number;
   onScore: (points: number) => void;
   onLifeLost: () => void;
-  onPause: () => void;
   onVisionStatus: (status: VisionStatus) => void;
 }>;
 
@@ -50,7 +45,6 @@ export default function GameCanvas({
   runId,
   onScore,
   onLifeLost,
-  onPause,
   onVisionStatus,
 }: GameCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -61,12 +55,10 @@ export default function GameCanvas({
   const runningRef = useRef(running);
   const onScoreRef = useRef(onScore);
   const onLifeLostRef = useRef(onLifeLost);
-  const onPauseRef = useRef(onPause);
   const onVisionStatusRef = useRef(onVisionStatus);
   runningRef.current = running;
   onScoreRef.current = onScore;
   onLifeLostRef.current = onLifeLost;
-  onPauseRef.current = onPause;
   onVisionStatusRef.current = onVisionStatus;
 
   useEffect(() => {
@@ -92,11 +84,6 @@ export default function GameCanvas({
     let visionReady = false;
     // Latest fingertip, for driving the preview marker.
     let lastSample = { x: 0.5, y: 0.5, atMs: -Infinity };
-    // Debounced fist gesture → pause. `fistLatched` blocks repeat pauses until
-    // the hand opens again, so a held fist doesn't immediately re-pause on resume.
-    let fistFrames = 0;
-    let openFrames = 0;
-    let fistLatched = false;
 
     const source = createMediaPipeCursorSource(video, {
       onStatus: (status) => {
@@ -108,28 +95,7 @@ export default function GameCanvas({
     const unsubscribe = source.subscribe((sample) => {
       lastSample = { x: sample.x, y: sample.y, atMs: performance.now() };
 
-      if (sample.fist) {
-        fistFrames += 1;
-        openFrames = 0;
-        if (
-          !fistLatched &&
-          fistFrames >= FIST_TRIGGER_FRAMES &&
-          runningRef.current &&
-          visionReady
-        ) {
-          fistLatched = true;
-          onPauseRef.current();
-        }
-      } else {
-        openFrames += 1;
-        fistFrames = 0;
-        if (openFrames >= FIST_RELEASE_FRAMES) {
-          fistLatched = false;
-        }
-      }
-
-      // A fist isn't a slice: skip cursor updates so a closing hand can't slash.
-      if (runningRef.current && visionReady && !sample.fist) {
+      if (runningRef.current && visionReady) {
         detector.updateCursor(sample.x, sample.y, sample.timestampMs);
       }
     });

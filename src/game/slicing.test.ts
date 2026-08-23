@@ -37,6 +37,26 @@ describe("sliceFruits", () => {
     expect(hits).toHaveLength(0);
   });
 
+  it("assists a near-miss caused by imperfect fingertip tracking", () => {
+    const fruit = fruitAt(0.5, 0.5, 0.05);
+    const hits = sliceFruits(trail([0.2, 0.585], [0.8, 0.585]), [fruit], 1);
+
+    expect(hits).toEqual([fruit]);
+  });
+
+  it("keeps bomb assistance tight to avoid accidental penalties", () => {
+    const bomb = new Fruit({
+      id: 2,
+      kind: "bomb",
+      radius: 0.05,
+      position: { x: 0.5, y: 0.5 },
+      velocity: { x: 0, y: 0 },
+    });
+    const near = trail([0.2, 0.575], [0.8, 0.575]);
+
+    expect(sliceFruits(near, [bomb], 1)).toHaveLength(0);
+  });
+
   it("needs at least two points to cut", () => {
     expect(sliceFruits(trail([0.5, 0.5]), [fruitAt(0.5, 0.5)], 1)).toHaveLength(0);
   });

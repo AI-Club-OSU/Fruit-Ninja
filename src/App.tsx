@@ -52,7 +52,6 @@ export default function App() {
 
   const onScore = useCallback((points: number) => dispatch({ type: "score", points }), []);
   const onLifeLost = useCallback(() => dispatch({ type: "loseLife" }), []);
-  const onPause = useCallback(() => dispatch({ type: "pause" }), []);
 
   // Keyboard shortcuts: space to start/restart, P or Esc to pause/resume.
   useEffect(() => {
@@ -82,7 +81,6 @@ export default function App() {
             runId={runId}
             onScore={onScore}
             onLifeLost={onLifeLost}
-            onPause={onPause}
             onVisionStatus={setVisionStatus}
           />
         )}
@@ -101,7 +99,7 @@ export default function App() {
               <span />
             </button>
             <p className="arena-hint">
-              Slice with your finger · make a fist to pause · avoid the bombs
+              Move naturally — clear hand motion slices · avoid the bombs
             </p>
           </>
         )}

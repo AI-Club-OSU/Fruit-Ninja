@@ -48,7 +48,9 @@ export class SlashDetector {
 
   constructor(options: SlashDetectorOptions = {}) {
     this.minimumSpeed = options.minimumSpeed ?? DEFAULT_SLICE_SPEED;
-    this.windowMs = options.windowMs ?? 120;
+    // Keep enough history to bridge a few missed webcam detections. A hand
+    // briefly dropping out should not erase the sweep that reconnects it.
+    this.windowMs = options.windowMs ?? 300;
     this.onSlash = options.onSlash;
   }
 

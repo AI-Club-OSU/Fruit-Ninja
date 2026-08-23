@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { isSliceGesture, measureSwipe, type TrackingPoint } from "./swipe.ts";
+import { DEFAULT_SLICE_SPEED, isSliceGesture, measureSwipe, type TrackingPoint } from "./swipe.ts";
 
 describe("swipe measurement", () => {
   it("measures normalized distance and speed", () => {
@@ -33,5 +33,15 @@ describe("swipe measurement", () => {
 
     expect(isSliceGesture(points, 0.004)).toBe(true);
     expect(isSliceGesture(points, 0.006)).toBe(false);
+  });
+
+  it("accepts modest deliberate movement at webcam frame rates by default", () => {
+    const points: TrackingPoint[] = [
+      { x: 0.4, y: 0.5, capturedAtMs: 0 },
+      { x: 0.415, y: 0.5, capturedAtMs: 33 },
+    ];
+
+    expect(DEFAULT_SLICE_SPEED).toBeLessThan(0.0005);
+    expect(isSliceGesture(points)).toBe(true);
   });
 });
