@@ -29,8 +29,6 @@ import { drawFrame } from "./renderer.ts";
 const MAX_FRAME_MS = 48;
 /** Peak screen-shake offset in CSS pixels at full intensity. */
 const SHAKE_PIXELS = 16;
-/** Hide the fingertip marker if no hand has been seen for this long. */
-const MARKER_STALE_MS = 250;
 
 type GameCanvasProps = Readonly<{
   running: boolean;
@@ -49,7 +47,6 @@ export default function GameCanvas({
 }: GameCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const markerRef = useRef<HTMLSpanElement>(null);
 
   // Keep the loop reading the latest values without tearing down on every change.
   const runningRef = useRef(running);
@@ -82,19 +79,16 @@ export default function GameCanvas({
     });
 
     let visionReady = false;
-    // Latest fingertip, for driving the preview marker.
-    let lastSample = { x: 0.5, y: 0.5, atMs: -Infinity };
 
     const source = createMediaPipeCursorSource(video, {
       onStatus: (status) => {
         visionReady = status === "ready";
         onVisionStatusRef.current(status);
       },
+
     });
 
     const unsubscribe = source.subscribe((sample) => {
-      lastSample = { x: sample.x, y: sample.y, atMs: performance.now() };
-
       if (runningRef.current && visionReady) {
         detector.updateCursor(sample.x, sample.y, sample.timestampMs);
       }
@@ -137,16 +131,6 @@ export default function GameCanvas({
         nowMs,
       });
 
-      // Drive the preview marker from the most recent fingertip.
-      const marker = markerRef.current;
-      if (marker) {
-        const fresh = nowMs - lastSample.atMs < MARKER_STALE_MS;
-        marker.style.opacity = fresh ? "1" : "0";
-        if (fresh) {
-          marker.style.left = `${lastSample.x * 100}%`;
-          marker.style.top = `${lastSample.y * 100}%`;
-        }
-      }
 
       frameId = requestAnimationFrame(renderLoop);
     };
@@ -167,7 +151,7 @@ export default function GameCanvas({
       <canvas ref={canvasRef} className="game-canvas" />
       <div className="cam-preview">
         <video ref={videoRef} className="cam-video" playsInline muted />
-        <span ref={markerRef} className="cam-marker" />
+
         <span className="cam-preview-label">You</span>
       </div>
     </>
