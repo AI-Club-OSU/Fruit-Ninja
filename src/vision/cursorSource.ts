@@ -8,44 +8,89 @@
  * touching game code.
  */
 
-import { FilesetResolver, HandLandmarker } from "@mediapipe/tasks-vision";
+import { FilesetResolver, ObjectDetector } from "@mediapipe/tasks-vision";
 
 import type { VisionStatus } from "./contracts.ts";
 import { type OneEuroOptions, Point2DFilter } from "./oneEuroFilter.ts";
 import { mapCameraPointToArena } from "./trackingArea.ts";
 
-const HAND_MODEL_URL =
-  "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
+const OBJECT_MODEL_URL =
+  "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite";
 
 const WASM_BASE = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm";
 
-let handPromise: Promise<HandLandmarker> | null = null;
+let detectorPromise: Promise<ObjectDetector> | null = null;
 
-const INDEX_FINGER_TIP = 8;
-
-function getHandLandmarker(): Promise<HandLandmarker> {
-  if (!handPromise) {
-    handPromise = (async () => {
+function getObjectDetector(): Promise<ObjectDetector> {
+  if (!detectorPromise) {
+    detectorPromise = (async () => {
       try {
         const fileset = await FilesetResolver.forVisionTasks(WASM_BASE);
-        return await HandLandmarker.createFromOptions(fileset, {
-          baseOptions: { modelAssetPath: HAND_MODEL_URL, delegate: "CPU" },
+        return await ObjectDetector.createFromOptions(fileset, {
+          baseOptions: { modelAssetPath: OBJECT_MODEL_URL, delegate: "CPU" },
           runningMode: "VIDEO",
-          numHands: 1,
-          minHandDetectionConfidence: 0.25,
-          minHandPresenceConfidence: 0.25,
-          minTrackingConfidence: 0.25,
+          maxResults: 5,
+          scoreThreshold: 0.4,
         });
       } catch (error) {
-        // Clear the cache so a later retry can attempt the load again instead
-        // of resolving the same rejected promise forever.
-        handPromise = null;
+        detectorPromise = null;
         throw error;
       }
     })();
   }
 
-  return handPromise;
+  return detectorPromise;
+}
+
+function isTennisRacket(name: string): boolean {
+  return name.toLowerCase().includes("tennis");
+}
+
+type PixelBox = { originX: number; originY: number; width: number; height: number };
+
+/**
+ * Draws (or clears) a gold bounding box on the preview canvas overlay.
+ * Accounts for the CSS `object-fit: cover` scaling and the horizontal mirror
+ * applied to the video element so the box lines up with what the player sees.
+ */
+function drawPreviewBox(
+  canvas: HTMLCanvasElement,
+  video: HTMLVideoElement,
+  box: PixelBox | null,
+): void {
+  const w = canvas.offsetWidth;
+  const h = canvas.offsetHeight;
+  if (w === 0 || h === 0 || video.videoWidth === 0 || video.videoHeight === 0) return;
+
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w;
+    canvas.height = h;
+  }
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  ctx.clearRect(0, 0, w, h);
+
+  if (!box) return;
+
+  // Replicate object-fit: cover — scale uniformly so video fills the canvas.
+  const scale = Math.max(w / video.videoWidth, h / video.videoHeight);
+  const offsetX = (w - video.videoWidth * scale) / 2;
+  const offsetY = (h - video.videoHeight * scale) / 2;
+
+  // Mirror X to match the CSS scaleX(-1) on the video element.
+  const mirroredOriginX = video.videoWidth - box.originX - box.width;
+
+  const rx = mirroredOriginX * scale + offsetX;
+  const ry = box.originY * scale + offsetY;
+  const rw = box.width * scale;
+  const rh = box.height * scale;
+
+  ctx.strokeStyle = "#ffb43f";
+  ctx.lineWidth = 2;
+  ctx.shadowColor = "rgba(0,0,0,0.6)";
+  ctx.shadowBlur = 4;
+  ctx.strokeRect(rx, ry, rw, rh);
 }
 
 export type CursorSample = Readonly<{
@@ -101,16 +146,21 @@ export function createPointerCursorSource(element: HTMLElement): CursorSource {
 export type MediaPipeCursorOptions = Readonly<{
   /** Called as the pipeline moves through camera → model → ready / error. */
   onStatus?: (status: VisionStatus) => void;
-  /** One Euro smoothing params for the fingertip; omit to use tuned defaults. */
+  /** One Euro smoothing params; omit to use tuned defaults. */
   smoothing?: OneEuroOptions;
+  /**
+   * Canvas overlaid on the camera preview. When provided, the source draws the
+   * tennis racket bounding box here each frame (clearing when nothing is found).
+   */
+  previewCanvas?: HTMLCanvasElement | null;
 }>;
 
 /**
- * MediaPipe-backed cursor source: the index fingertip becomes the blade.
+ * MediaPipe-backed cursor source: the racket centre becomes the blade.
  *
- * Converts:  Camera → Video → HandLandmarker → CursorSample
+ * Converts:  Camera → Video → ObjectDetector → CursorSample
  *
- * Camera coordinates are mirrored and expanded so comfortable hand movement
+ * Camera coordinates are mirrored and expanded so comfortable racket movement
  * reaches the full arena without requiring the player to touch the frame edges.
  * `onStatus` lets the UI show "allow camera" / "loading" / error states and gate
  * gameplay until tracking is live. The stream is fully released on unsubscribe,
@@ -152,7 +202,7 @@ export function createMediaPipeCursorSource(
         await video.play();
 
         setStatus("loading-model");
-        const handLandmarker = await getHandLandmarker();
+        const objectDetector = await getObjectDetector();
         if (!active) {
           return;
         }
@@ -166,18 +216,30 @@ export function createMediaPipeCursorSource(
           const nowMs = performance.now();
           if (video.readyState >= 2 && nowMs > lastTimestampMs) {
             lastTimestampMs = nowMs;
-            const results = handLandmarker.detectForVideo(video, nowMs);
-            const landmarks = results.landmarks[0];
-            const fingertip = landmarks?.[INDEX_FINGER_TIP];
+            const results = objectDetector.detectForVideo(video, nowMs);
+            const racket = results.detections.find((d) =>
+              d.categories.some((c) => isTennisRacket(c.categoryName)),
+            );
 
-            if (fingertip) {
-              const mapped = mapCameraPointToArena(fingertip.x, fingertip.y);
+            const box = racket?.boundingBox ?? null;
+
+            if (options.previewCanvas) {
+              drawPreviewBox(options.previewCanvas, video, box);
+            }
+
+            if (box) {
+              const { originX, originY, width, height } = box;
+              // Bounding box is in pixels; normalize to 0-1 using video dimensions.
+              const normX = (originX + width / 2) / video.videoWidth;
+              const normY = (originY + height / 2) / video.videoHeight;
+              const mapped = mapCameraPointToArena(normX, normY);
               const smoothed = smoother.filter(mapped.x, mapped.y, nowMs);
+              const score = racket?.categories[0]?.score ?? 1;
               listener({
                 x: smoothed.x,
                 y: smoothed.y,
                 timestampMs: nowMs,
-                confidence: 1,
+                confidence: score,
               });
             }
           }
