@@ -10,17 +10,21 @@
  * Arena and camera; pause/resume only flip `running`, so the board is preserved.
  */
 
-import { type ReactNode, useCallback, useEffect, useReducer, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useReducer, useRef, useState } from "react";
 
 import GameCanvas from "./components/GameCanvas.tsx";
 import Hud from "./components/Hud.tsx";
 import { gameReducer, initialGameState } from "./game/gameState.ts";
+import { type LeaderboardEntry, recordScore } from "./game/leaderboard.ts";
 import type { VisionStatus } from "./vision/contracts.ts";
 
 export default function App() {
   const [state, dispatch] = useReducer(gameReducer, initialGameState);
   const [runId, setRunId] = useState(0);
   const [visionStatus, setVisionStatus] = useState<VisionStatus>("idle");
+  const [username, setUsername] = useState("");
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
+  const [isNewBest, setIsNewBest] = useState(false);
 
   // The camera runs only during a live session; game over ends it.
   const active = state.phase === "playing" || state.phase === "paused";
@@ -53,13 +57,30 @@ export default function App() {
   const onScore = useCallback((points: number) => dispatch({ type: "score", points }), []);
   const onLifeLost = useCallback(() => dispatch({ type: "loseLife" }), []);
 
+  // Save score and refresh leaderboard when a run ends.
+  const usernameRef = useRef(username);
+  usernameRef.current = username;
+  useEffect(() => {
+    if (state.phase !== "gameOver") return;
+    const name = usernameRef.current.trim();
+    if (name) {
+      const { board, isNewBest: newBest } = recordScore(leaderboard, name, state.score);
+      setLeaderboard(board);
+      setIsNewBest(newBest);
+    } else {
+      setIsNewBest(false);
+    }
+    // Intentionally omit state.score — it won't change while phase is gameOver.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.phase]);
+
   // Keyboard shortcuts: space to start/restart, P or Esc to pause/resume.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === " " && (state.phase === "menu" || state.phase === "gameOver")) {
         event.preventDefault();
         if (state.phase === "menu") {
-          start();
+          if (username.trim()) start();
         } else {
           restart();
         }
@@ -70,7 +91,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [state.phase, cameraReady, start, restart]);
+  }, [state.phase, cameraReady, start, restart, username]);
 
   return (
     <main className="game-shell selection:bg-amber-200 selection:text-zinc-950">
@@ -104,7 +125,14 @@ export default function App() {
           </>
         )}
 
-        {state.phase === "menu" && <MenuScreen onStart={start} />}
+        {state.phase === "menu" && (
+          <MenuScreen
+            username={username}
+            onUsernameChange={setUsername}
+            onStart={start}
+            leaderboard={leaderboard}
+          />
+        )}
 
         {cameraStarting && (
           <CameraStarting status={visionStatus} onCancel={() => dispatch({ type: "toMenu" })} />
@@ -157,14 +185,15 @@ export default function App() {
         )}
 
         {state.phase === "gameOver" && (
-          <Overlay title="Game Over">
+          <Overlay title="Game Over" wide>
             <p className="overlay-score">
               <span>Score</span>
               <strong>{state.score.toString().padStart(5, "0")}</strong>
             </p>
-            <p className="overlay-best">
-              Best this session · {state.best.toString().padStart(5, "0")}
-            </p>
+            {isNewBest && username.trim() && (
+              <p className="overlay-new-best">New personal best!</p>
+            )}
+            <LeaderboardTable entries={leaderboard} currentUsername={username.trim()} />
             <div className="overlay-actions">
               <button className="primary-action" type="button" onClick={restart}>
                 Play again
@@ -185,7 +214,24 @@ export default function App() {
   );
 }
 
-function MenuScreen({ onStart }: { onStart: () => void }) {
+function MenuScreen({
+  username,
+  onUsernameChange,
+  onStart,
+  leaderboard,
+}: {
+  username: string;
+  onUsernameChange: (v: string) => void;
+  onStart: () => void;
+  leaderboard: LeaderboardEntry[];
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const handleSubmit = (e: SubmitEvent) => {
+    e.preventDefault();
+    if (username.trim()) onStart();
+  };
+
   return (
     <div className="menu-screen">
       <p className="eyebrow">Computer vision arcade</p>
@@ -198,16 +244,80 @@ function MenuScreen({ onStart }: { onStart: () => void }) {
         slices for combo bonuses — and whatever you do, don&rsquo;t cut the bombs.
       </p>
 
-      <button className="primary-action primary-action--lg" type="button" onClick={onStart}>
+      <form className="username-group" onSubmit={handleSubmit}>
+        <label className="username-label" htmlFor="username-input">
+          Your name
+        </label>
+        <input
+          id="username-input"
+          ref={inputRef}
+          className="username-input"
+          type="text"
+          placeholder="Enter name…"
+          maxLength={20}
+          autoComplete="off"
+          autoFocus
+          value={username}
+          onChange={(e) => onUsernameChange(e.target.value)}
+        />
+      </form>
+
+      <button
+        className="primary-action primary-action--lg"
+        type="button"
+        disabled={!username.trim()}
+        onClick={() => { if (username.trim()) onStart(); }}
+      >
         Start slicing
         <span aria-hidden="true">↗</span>
       </button>
+
+      {leaderboard.length > 0 && (
+        <div className="menu-leaderboard">
+          <p className="menu-leaderboard-title">Leaderboard</p>
+          <LeaderboardTable entries={leaderboard} currentUsername={username.trim()} />
+        </div>
+      )}
 
       <p className="menu-note">
         Uses your webcam — your index fingertip controls the blade. Allow camera access when
         prompted; nothing leaves your device.
       </p>
     </div>
+  );
+}
+
+function LeaderboardTable({
+  entries,
+  currentUsername,
+}: {
+  entries: LeaderboardEntry[];
+  currentUsername: string;
+}) {
+  if (entries.length === 0) return null;
+  return (
+    <table className="leaderboard" aria-label="Leaderboard">
+      <thead>
+        <tr>
+          <th className="leaderboard-rank">#</th>
+          <th className="leaderboard-name">Player</th>
+          <th className="leaderboard-score">Score</th>
+        </tr>
+      </thead>
+      <tbody>
+        {entries.map((entry, i) => {
+          const isCurrent =
+            currentUsername && entry.username.toLowerCase() === currentUsername.toLowerCase();
+          return (
+            <tr key={entry.username} className={isCurrent ? "leaderboard-row--current" : ""}>
+              <td className="leaderboard-rank">{i === 0 ? "★" : `${i + 1}`}</td>
+              <td className="leaderboard-name">{entry.username}</td>
+              <td className="leaderboard-score">{entry.score.toString().padStart(5, "0")}</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
   );
 }
 
@@ -235,10 +345,18 @@ function CameraStarting({ status, onCancel }: { status: VisionStatus; onCancel: 
   );
 }
 
-function Overlay({ title, children }: { title: string; children: ReactNode }) {
+function Overlay({
+  title,
+  wide,
+  children,
+}: {
+  title: string;
+  wide?: boolean;
+  children: ReactNode;
+}) {
   return (
     <div className="overlay" role="dialog" aria-label={title}>
-      <div className="overlay-card">
+      <div className={wide ? "overlay-card overlay-card--wide" : "overlay-card"}>
         <h2 className="overlay-title">{title}</h2>
         {children}
       </div>
